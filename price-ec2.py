@@ -41,36 +41,25 @@ class Volume:
 
 
 class Cost:
+    _factors = dict(Hrs=1, Day=24, Mo=24*30)
+
     def __init__(self, dollars, per):
         self.dollars = float(dollars)
         self.per = per
 
-    def per_day(self):
-        if self.per == 'Hrs':
-            return Cost(self.dollars * 24, 'Day')
-        if self.per == 'Day':
+    def _convert(self, to):
+        if self.per == to:
             return self
-        if self.per == 'Mo':
-            return Cost(self.dollars / 30, 'Day')
-        raise Exception("can't convert {} to Day".format(self.per))
+        return Cost(self._factors[to] / self._factors[self.per] * self.dollars, to)
 
     def per_hour(self):
-        if self.per == 'Hrs':
-            return self
-        if self.per == 'Day':
-            return Cost(self.dollars / 24, 'Hrs')
-        if self.per == 'Mo':
-            return Cost(self.dollars / 30 / 24, 'Hrs')
-        raise Exception("can't convert {} to Hrs".format(self.per))
+        return self._convert('Hrs')
+
+    def per_day(self):
+        return self._convert('Day')
 
     def per_month(self):
-        if self.per == 'Hrs':
-            return Cost(self.dollars * 30 * 24, 'Mo')
-        if self.per == 'Day':
-            return Cost(self.dollars * 30, 'Mo')
-        if self.per == 'Mo':
-            return self
-        raise Exception("can't convert {} to Mo".format(self.per))
+        return self._convert('Mo')
 
     def __str__(self):
         if math.isnan(self.dollars):
