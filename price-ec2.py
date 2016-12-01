@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 
 import json
+import math
 from collections import defaultdict
 
 import boto3
+from tabulate import tabulate
 
 client = boto3.client('ec2')
 
@@ -19,8 +21,8 @@ class Instance:
     @staticmethod
     def from_json(json):
         id = json['InstanceId']
-        name = None
-        for tag in json['Tags']:
+        name = '???'
+        for tag in json.get('Tags', []):
             if tag['Key'] == 'Name':
                 name = tag['Value']
                 break
@@ -54,6 +56,8 @@ class Cost:
         raise Exception("can't convert {} to Day".format(self.per))
 
     def __str__(self):
+        if math.isnan(self.dollars):
+            return '?/{}'.format(self.per)
         return '{self.dollars:.3g}/{self.per}'.format(self=self)
 
     def __repr__(self):
@@ -95,82 +99,68 @@ with open('offers/ec2.json') as fh:
 
 def get_instance_cost(type):
     if type == 'r4.large':
-        yield from [('0.133', 'Hrs')]
+        yield Cost(0.133, 'Hrs')
+        return
     for p in ec2_offers['products'].values():
         if p['attributes'].get('instanceType') == type and p['attributes']['location'] == 'US East (N. Virginia)' and p['attributes']['operatingSystem'] == 'Linux' and p['attributes']['tenancy'] == 'Shared':
             terms = ec2_offers['terms']['OnDemand'][p['sku']]
             for term in terms.values():
-                yield from [(dimension['pricePerUnit']['USD'], dimension['unit']) for dimension in term['priceDimensions'].values()]
+                yield from [Cost(dimension['pricePerUnit']['USD'], dimension['unit']) for dimension in term['priceDimensions'].values()]
 
 
 def get_volume_cost(type):
     if type == 'io1':
         search_type = 'EBS:VolumeUsage.piops'
+    elif type == 'standard':
+        search_type = 'EBS:VolumeUsage'
     else:  # gp2, st1, sc1
         search_type = 'EBS:VolumeUsage.' + type
     for p in ec2_offers['products'].values():
         if p['attributes']['usagetype'] == search_type:
             terms = ec2_offers['terms']['OnDemand'][p['sku']]
             for term in terms.values():
-                yield from [(dimension['pricePerUnit']['USD'], dimension['unit']) for dimension in term['priceDimensions'].values()]
+                yield from [Cost(dimension['pricePerUnit']['USD'], dimension['unit']) for dimension in term['priceDimensions'].values()]
 
 
 def get_total_storage_cost(instance):
     costs = defaultdict(float)
     for volume in instance.volumes:
-        cost = list(get_volume_cost(volume.type))
-        if len(cost) != 1:
-            return '?'
-        dollars, per = cost[0]
-        dollars = float(dollars)
-        if per.startswith('GB-'):
-            dollars *= volume.size
-            per = per[3:]
-        costs[per] += dollars
-    return [(b, a) for (a, b) in costs.items()]
+        volume_costs = list(get_volume_cost(volume.type))
+        for c in volume_costs:
+            if c.per.startswith('GB-'):
+                costs[c.per[3:]] += c.dollars * volume.size
+            else:
+                costs[c.per] += c.dollars
+    if len(costs) == 0:
+        return [Cost(0, 'Mo')]
+    return [Cost(b, a) for (a, b) in costs.items()]
 
 
-def add_costs(a, b):
-    def to_perday(dollars, per):
-        dollars = float(dollars)
-        if per == 'Day':
-            return dollars
-        if per == 'Hrs':
-            return 24 * dollars
-        if per == 'Mo':
-            return dollars / 30
-
-    if len(a) != 1 or len(b) != 1:
-        return '?'
-    a = a[0]
-    b = b[0]
-    if len(a) != 2 or len(b) != 2:
-        return '?'
-    return to_perday(*a) + to_perday(*b), 'Day'
+def just_one(costs, per):
+    if len(costs) != 1:
+        return Cost(math.nan, per)
+    return costs[0]
 
 
-def format_cost(cost):
-    if len(cost) == 1:
-        cost = cost[0]
-    if len(cost) == 2:
-        dollars, per = cost
-        return '{:.3g}/{}'.format(float(dollars), per)
-    return '?'  # not sure what
+headers = ('id', 'name', 'type', 'type $', 'disk', 'disk $', 'running $', 'state', 'actual $')
+def build_instance_cost_table(instances):
+    for i in instances:
+        total_storage = sum(v.size for v in i.volumes)
+        instance_cost = just_one(list(get_instance_cost(i.type)), 'Hrs')
+        storage_cost = just_one(get_total_storage_cost(i), 'Mo')
+        total_cost = instance_cost.per_day() + storage_cost.per_day()
+        if i.state == 'running':
+            actual_cost = total_cost
+        else:
+            actual_cost = storage_cost.per_day()
+        yield (i.id, i.name, i.type, instance_cost, '{} GB'.format(total_storage), storage_cost, total_cost, i.state, actual_cost)
 
 
 def print_instance_cost_table(instances):
-    print('{:<10}  {:<16}  {:<10}  {:>10}  {:>8}  {:>8}  {:>8}  {:<8}'.format('id', 'name', 'type', '$', 'disk', '$', 'total $', 'state'))
-    for i in instances:
-        total_storage = sum(v.size for v in i.volumes)
-        instance_cost = list(get_instance_cost(i.type))
-        storage_cost = get_total_storage_cost(i)
-        total_cost = add_costs(instance_cost, storage_cost)
-        print('{0.id:<10}  {0.name:<16}  {0.type:<10}  {1:>10}  {2:>8}  {3:>8}  {4:>8}  {0.state:<8}'.format(
-            i, format_cost(instance_cost),
-            '{} GB'.format(total_storage), format_cost(storage_cost),
-            format_cost([total_cost])))
+    print(tabulate(build_instance_cost_table(instances), headers=headers))
 
-instances = fetch_instance_info(Filters=[{'Name': 'tag:Environment', 'Values': ['TUS']}])
+# instances = fetch_instance_info(Filters=[{'Name': 'tag:Environment', 'Values': ['TUS']}])
+instances = fetch_instance_info()
 fetch_volume_info(instances)
 
 instances.sort(key=lambda x: x.name)
