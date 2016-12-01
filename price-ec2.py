@@ -38,6 +38,7 @@ class Volume:
         self.id = id
         self.type = None
         self.size = None
+        self.iops = None
 
 
 class Cost:
@@ -97,6 +98,7 @@ def fetch_volume_info(instances):
         volume = all_volumes[v['VolumeId']]
         volume.size = v['Size']
         volume.type = v['VolumeType']
+        volume.iops = v.get('Iops')
 
 
 with open('offers/ec2.json') as fh:
@@ -131,14 +133,14 @@ region_usagetype = {
 
 def get_volume_cost(type, region):
     if type == 'io1':
-        search_type = 'EBS:VolumeUsage.piops'
+        search_types = ['EBS:VolumeUsage.piops', 'EBS:VolumeP-IOPS.piops']
     elif type == 'standard':
-        search_type = 'EBS:VolumeUsage'
+        search_types = ['EBS:VolumeUsage']
     else:  # gp2, st1, sc1
-        search_type = 'EBS:VolumeUsage.' + type
-    search_type = region_usagetype[region] + search_type
+        search_types = ['EBS:VolumeUsage.' + type]
+    search_types = [region_usagetype[region] + t for t in search_types]
     for p in ec2_offers['products'].values():
-        if p['attributes']['usagetype'] == search_type:
+        if p['attributes']['usagetype'] in search_types:
             terms = ec2_offers['terms']['OnDemand'][p['sku']]
             for term in terms.values():
                 yield from [Cost(dimension['pricePerUnit']['USD'], dimension['unit']) for dimension in term['priceDimensions'].values()]
@@ -151,6 +153,8 @@ def get_total_storage_cost(instance):
         for c in volume_costs:
             if c.per.startswith('GB-'):
                 costs[c.per[3:]] += c.dollars * volume.size
+            elif c.per.startswith('IOPS-'):
+                costs[c.per[5:]] += c.dollars * volume.iops
             else:
                 costs[c.per] += c.dollars
     if len(costs) == 0:
