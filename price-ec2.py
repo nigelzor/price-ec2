@@ -2,6 +2,7 @@
 
 import json
 import math
+import re
 from collections import defaultdict
 
 import boto3
@@ -68,6 +69,16 @@ class Instance:
         if len(costs) == 0:
             return [Cost(0, 'Mo')]
         return [Cost(b, a) for (a, b) in costs.items()]
+
+    def simple_costs(self):
+        instance_cost = just_one(self.instance_costs, 'Hrs')
+        storage_cost = just_one(self.storage_costs, 'Mo')
+        total_cost = instance_cost.per_day() + storage_cost.per_day()
+        if self.state == 'running':
+            actual_cost = total_cost
+        else:
+            actual_cost = storage_cost
+        return instance_cost, storage_cost, total_cost, actual_cost
 
     @staticmethod
     def from_json(json):
@@ -183,22 +194,18 @@ def build_instance_cost_table(instances):
 
     def build_row(i):
         total_storage = sum(v.size for v in i.volumes)
-        instance_cost = just_one(i.instance_costs, 'Hrs')
-        storage_cost = just_one(i.storage_costs, 'Mo')
-        total_cost = instance_cost.per_day() + storage_cost.per_day()
-        if i.state == 'running':
-            actual_cost = total_cost
-        else:
-            actual_cost = storage_cost
+        instance_cost, storage_cost, total_cost, actual_cost = i.simple_costs()
         return i.name, i.id, i.az, i.type, instance_cost.per_hour().dollars, total_storage, storage_cost.per_month().dollars, total_cost.per_day().dollars, i.state, actual_cost.per_day().dollars
 
     return headers, [build_row(i) for i in instances]
 
 
-def print_instance_cost_table(instances):
+def print_instance_cost_table(instances, total=True):
     headers, table = build_instance_cost_table(instances)
     # cost decreasing, name increasing
     table.sort(key=lambda x: (-x[-1], x[0]))
+    if total:
+        table.append(('Total', '', '', '', sum(r[4] for r in table), sum(r[5] for r in table), sum(r[6] for r in table), sum(r[7] for r in table), '', sum(r[9] for r in table)))
     print(tabulate(table, headers=headers))
 
 
@@ -213,6 +220,23 @@ def fetch_all_instances():
 
     instances.sort(key=lambda x: x.name)
     return instances
+
+
+def print_breakdown(instances):
+    count = defaultdict(int)
+    cost = defaultdict(float)
+    for i in instances:
+        instance_cost, storage_cost, total_cost, actual_cost = i.simple_costs()
+
+        m = re.search('(...)\d?(.+?)\d*$', i.name)
+        if m:
+            env, cat = m.groups()
+            count[(env, cat)] += 1
+            cost[(env, cat)] += actual_cost.per_day().dollars
+
+    rows = [(k[0], k[1], count[k], cost[k]) for k in count.keys()]
+    rows.sort(key=lambda x: (-x[-1], x[0], x[1]))
+    print(tabulate(rows))
 
 
 def main():
