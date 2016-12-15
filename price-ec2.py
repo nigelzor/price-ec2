@@ -9,11 +9,16 @@ import boto3
 from cached_property import cached_property
 from tabulate import tabulate
 
+ALL_REGIONS = ['us-east-1', 'us-west-2', 'eu-west-1', 'ca-central-1']
+
 with open('offers/v1.0/aws/AmazonEC2/current/index.json') as fh:
     ec2_offers = json.load(fh)
 
 with open('offers/v1.0/aws/AmazonRDS/current/index.json') as fh:
     rds_offers = json.load(fh)
+
+with open('offers/v1.0/aws/AmazonElastiCache/current/index.json') as fh:
+    elasticache_offers = json.load(fh)
 
 # is there any way to get this from boto?
 region_usagetype = {
@@ -34,6 +39,10 @@ class Instance:
         self.state = state
         self.az = az
         self.volumes = []
+
+    @property
+    def running(self):
+        return self.state == 'running'
 
     @property
     def region(self):
@@ -81,7 +90,7 @@ class Instance:
         instance_cost = just_one(self.instance_costs, 'Hrs')
         storage_cost = just_one(self.storage_costs, 'Mo')
         total_cost = instance_cost.per_day() + storage_cost.per_day()
-        if self.state == 'running':
+        if self.running:
             actual_cost = total_cost
         else:
             actual_cost = storage_cost
@@ -138,6 +147,10 @@ class DBInstance(Instance):
         self.storage_type = storage_type
         self.size = size
         self.iops = iops
+
+    @property
+    def running(self):
+        return True
 
     @property
     def total_storage(self):
@@ -229,8 +242,42 @@ class DBInstance(Instance):
         storage_type = json['StorageType']
         size = json['AllocatedStorage']
         iops = json.get('Iops')
-        instance = DBInstance(id, name, type, engine, state, az, multi_az, storage_type, size, iops)
-        return instance
+        return DBInstance(id, name, type, engine, state, az, multi_az, storage_type, size, iops)
+
+
+class CacheInstance(Instance):
+    def __init__(self, id, name, type, state, region, engine):
+        super().__init__(id, name, type, state, region)
+        self._region = region
+        self.engine = engine
+
+    @property
+    def running(self):
+        return True
+
+    @property
+    def region(self):
+        return self._region
+
+    def unit_price(self):
+        search_type = region_usagetype[self.region] + 'NodeUsage:' + self.type
+
+        skus = [p['sku'] for p in elasticache_offers['products'].values() if p['attributes']['usagetype'] == search_type and p['attributes']['cacheEngine'].lower() == self.engine]
+        if len(skus) != 1:
+            raise Exception('found {} skus for {} in {} (expected 1)'.format(len(skus), self.type, self.region))
+
+        for term in elasticache_offers['terms']['OnDemand'][skus[0]].values():
+            for dimension in term['priceDimensions'].values():
+                yield Cost(dimension['pricePerUnit']['USD'], dimension['unit'])
+
+    @staticmethod
+    def from_json(json, region):
+        id = json['CacheClusterId']
+        name = id
+        type = json['CacheNodeType']
+        state = json['CacheClusterStatus']
+        engine = json['Engine']
+        return CacheInstance(id, name, type, state, region, engine)
 
 
 class Cost:
@@ -297,9 +344,16 @@ def fetch_volume_info(client, instances):
 def fetch_db_info(client, **kwargs):
     db_metadata = client.describe_db_instances(**kwargs)
 
+    return [DBInstance.from_json(d) for d in db_metadata['DBInstances']]
+
+
+def fetch_cache_info(client, **kwargs):
+    cache_metadata = client.describe_cache_clusters(**kwargs)
+
     result = []
-    for d in db_metadata['DBInstances']:
-        result.append(DBInstance.from_json(d))
+    for c in cache_metadata['CacheClusters']:
+        for i in range(c['NumCacheNodes']):
+            result.append(CacheInstance.from_json(c, client.meta.region_name))
     return result
 
 
@@ -328,10 +382,8 @@ def print_instance_cost_table(instances, total=True):
     print(tabulate(table, headers=headers))
 
 
-def fetch_all_instances(regions=None):
+def fetch_all_instances(regions=ALL_REGIONS):
     instances = []
-    if regions is None:
-        regions = ['us-east-1', 'us-west-2', 'eu-west-1', 'ca-central-1']
     for region in regions:
         client = boto3.client('ec2', region_name=region)
         # instances = fetch_instance_info(Filters=[{'Name': 'tag:Environment', 'Values': ['TUS']}])
@@ -343,14 +395,22 @@ def fetch_all_instances(regions=None):
     return instances
 
 
-def fetch_all_db_instances(regions=None):
+def fetch_all_db_instances(regions=ALL_REGIONS):
     instances = []
-    if regions is None:
-        regions = ['us-east-1', 'us-west-2', 'eu-west-1', 'ca-central-1']
     for region in regions:
         client = boto3.client('rds', region_name=region)
-        # instances = fetch_instance_info(Filters=[{'Name': 'tag:Environment', 'Values': ['TUS']}])
         region_instances = fetch_db_info(client)
+        instances += region_instances
+
+    instances.sort(key=lambda x: x.name)
+    return instances
+
+
+def fetch_all_cache_instances(regions=ALL_REGIONS):
+    instances = []
+    for region in regions:
+        client = boto3.client('elasticache', region_name=region)
+        region_instances = fetch_cache_info(client)
         instances += region_instances
 
     instances.sort(key=lambda x: x.name)
@@ -375,7 +435,7 @@ def print_breakdown(instances):
 
 
 def main():
-    instances = fetch_all_instances() + fetch_all_db_instances()
+    instances = fetch_all_instances() + fetch_all_db_instances() + fetch_all_cache_instances()
     print_instance_cost_table(instances)
 
 if __name__ == '__main__':
