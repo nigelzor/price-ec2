@@ -128,22 +128,14 @@ class Volume:
                     yield Cost(dimension['pricePerUnit']['USD'], dimension['unit'])
 
 
-class DBInstance:
+class DBInstance(Instance):
     def __init__(self, id, name, type, engine, state, az, multi_az, storage_type, size, iops):
-        self.id = id
-        self.name = name
-        self.type = type
+        super().__init__(id, name, type, state, az)
         self.engine = engine
-        self.state = state
-        self.az = az
         self.multi_az = multi_az
         self.storage_type = storage_type
         self.size = size
         self.iops = iops
-
-    @property
-    def region(self):
-        return self.az[:-1]
 
     @property
     def total_storage(self):
@@ -169,10 +161,6 @@ class DBInstance:
         for term in rds_offers['terms']['OnDemand'][skus[0]].values():
             for dimension in term['priceDimensions'].values():
                 yield Cost(dimension['pricePerUnit']['USD'], dimension['unit'])
-
-    @cached_property
-    def instance_costs(self):
-        return list(self.unit_price())
 
     @cached_property
     def storage_costs(self):
@@ -211,16 +199,6 @@ class DBInstance:
         if len(costs) == 0:
             return [Cost(0, 'Mo')]
         return [Cost(b, a) for (a, b) in costs.items()]
-
-    def simple_costs(self):
-        instance_cost = just_one(self.instance_costs, 'Hrs')
-        storage_cost = just_one(self.storage_costs, 'Mo')
-        total_cost = instance_cost.per_day() + storage_cost.per_day()
-        if self.state == 'running':
-            actual_cost = total_cost
-        else:
-            actual_cost = storage_cost
-        return instance_cost, storage_cost, total_cost, actual_cost
 
     @staticmethod
     def from_json(json):
