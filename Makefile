@@ -1,10 +1,10 @@
-all: .libs offers/ec2.json
+all: .libs offers
 
-offers/index.json:
-	wget https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/index.json -O $@
-
-offers/ec2.json:
-	wget https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/index.json -O $@
+.PHONY: offers
+offers:
+	wget -N -r -nH https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/index.json \
+		https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/index.json \
+		https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/index.json
 
 venv:
 	virtualenv -p python3 venv
