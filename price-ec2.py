@@ -18,8 +18,10 @@ with open('offers/v1.0/aws/AmazonRDS/current/index.json') as fh:
 # is there any way to get this from boto?
 region_usagetype = {
     'us-east-1': '',
+    'us-east-2': 'USE2-',
     'us-west-2': 'USW2-',
     'eu-west-1': 'EU-',
+    'eu-west-2': 'EUW2-',
     'ca-central-1': 'CAN1-',
 }
 
@@ -164,6 +166,10 @@ class DBInstance(Instance):
 
     @cached_property
     def storage_costs(self):
+        return self._storage_costs()
+
+    def _storage_costs(self, override_region=None):
+        region = override_region or self.region
         if self.multi_az:
             search_type_prefix = 'RDS:Multi-AZ-'
         else:
@@ -176,11 +182,17 @@ class DBInstance(Instance):
             search_types = ['StorageUsage']
         else:
             raise Exception('unknown search type for ' + self.storage_type)
-        search_types = [region_usagetype[self.region] + search_type_prefix + t for t in search_types]
+        search_types = [region_usagetype[region] + search_type_prefix + t for t in search_types]
 
         skus = [p['sku'] for p in rds_offers['products'].values() if p['attributes']['usagetype'] in search_types]
-        if len(skus) == 0:
-            return [Cost(math.nan, 'Mo')]  # most regions are missing storage costs (!)
+        # most regions are missing storage costs (!)
+        # only ca-central-1, us-east-2, and eu-west-2 show up in the json
+        if len(skus) == 0 and override_region is None:
+            if region[:3] == 'us-':
+                return self._storage_costs(override_region='us-east-2')
+            if region[:3] == 'eu-':
+                return self._storage_costs(override_region='eu-west-2')
+            return [Cost(math.nan, 'Mo')]
         if len(skus) != len(search_types):
             raise Exception('found {} skus for {}'.format(len(skus), search_types))
 
