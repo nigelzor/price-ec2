@@ -16,7 +16,8 @@ with open('offers/ec2.json') as fh:
 region_usagetype = {
     'us-east-1': '',
     'us-west-2': 'USW2-',
-    'eu-west-1': 'EU-'
+    'eu-west-1': 'EU-',
+    'ca-central-1': 'CAN1-',
 }
 
 
@@ -206,9 +207,11 @@ def print_instance_cost_table(instances, total=True):
     print(tabulate(table, headers=headers))
 
 
-def fetch_all_instances():
+def fetch_all_instances(regions=None):
     instances = []
-    for region in ['us-east-1', 'us-west-2', 'eu-west-1']:
+    if regions is None:
+        regions = ['us-east-1', 'us-west-2', 'eu-west-1', 'ca-central-1']
+    for region in regions:
         client = boto3.client('ec2', region_name=region)
         # instances = fetch_instance_info(Filters=[{'Name': 'tag:Environment', 'Values': ['TUS']}])
         region_instances = fetch_instance_info(client)
