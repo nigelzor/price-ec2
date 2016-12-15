@@ -34,9 +34,6 @@ class Instance:
         return self.az[:-1]
 
     def unit_price(self):
-        if self.type == 'r4.large':
-            yield Cost(0.133, 'Hrs')
-            return
         if self.type == 'm1.small':
             search_type = region_usagetype[self.region] + 'BoxUsage'
         else:
