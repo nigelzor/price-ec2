@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-
+import argparse
 import json
 import math
 import re
@@ -11,15 +11,6 @@ from tabulate import tabulate
 
 ALL_REGIONS = ['us-east-1', 'us-west-2', 'eu-west-1', 'ca-central-1']
 
-with open('offers/v1.0/aws/AmazonEC2/current/index.json') as fh:
-    ec2_offers = json.load(fh)
-
-with open('offers/v1.0/aws/AmazonRDS/current/index.json') as fh:
-    rds_offers = json.load(fh)
-
-with open('offers/v1.0/aws/AmazonElastiCache/current/index.json') as fh:
-    elasticache_offers = json.load(fh)
-
 # is there any way to get this from boto?
 region_usagetype = {
     'us-east-1': '',
@@ -29,6 +20,25 @@ region_usagetype = {
     'eu-west-2': 'EUW2-',
     'ca-central-1': 'CAN1-',
 }
+
+
+class Offers:
+    @cached_property
+    def ec2(self):
+        with open('offers/v1.0/aws/AmazonEC2/current/index.json') as fh:
+            return json.load(fh)
+
+    @cached_property
+    def rds(self):
+        with open('offers/v1.0/aws/AmazonRDS/current/index.json') as fh:
+            return json.load(fh)
+
+    @cached_property
+    def elasticache(self):
+        with open('offers/v1.0/aws/AmazonElastiCache/current/index.json') as fh:
+            return json.load(fh)
+
+offers = Offers()
 
 
 class Instance:
@@ -92,11 +102,11 @@ class EC2Instance(Instance):
         else:
             search_type = region_usagetype[self.region] + 'BoxUsage:' + self.type
 
-        skus = [p['sku'] for p in ec2_offers['products'].values() if p['attributes']['usagetype'] == search_type and p['attributes']['operatingSystem'] == 'Linux']
+        skus = [p['sku'] for p in offers.ec2['products'].values() if p['attributes']['usagetype'] == search_type and p['attributes']['operatingSystem'] == 'Linux']
         if len(skus) != 1:
             raise Exception('found {} skus for {} in {} (expected 1)'.format(len(skus), self.type, self.region))
 
-        for term in ec2_offers['terms']['OnDemand'][skus[0]].values():
+        for term in offers.ec2['terms']['OnDemand'][skus[0]].values():
             for dimension in term['priceDimensions'].values():
                 yield Cost(dimension['pricePerUnit']['USD'], dimension['unit'])
 
@@ -149,12 +159,12 @@ class Volume:
             search_types = ['EBS:VolumeUsage.' + self.type]
         search_types = [region_usagetype[region] + t for t in search_types]
 
-        skus = [p['sku'] for p in ec2_offers['products'].values() if p['attributes']['usagetype'] in search_types]
+        skus = [p['sku'] for p in offers.ec2['products'].values() if p['attributes']['usagetype'] in search_types]
         if len(skus) != len(search_types):
             raise Exception('found {} skus for {} in {} (expected {})'.format(len(skus), self.type, region, len(search_types)))
 
         for sku in skus:
-            for term in ec2_offers['terms']['OnDemand'][sku].values():
+            for term in offers.ec2['terms']['OnDemand'][sku].values():
                 for dimension in term['priceDimensions'].values():
                     yield Cost(dimension['pricePerUnit']['USD'], dimension['unit'])
 
@@ -185,11 +195,11 @@ class DBInstance(Instance):
         else:
             search_engine = self.engine
 
-        skus = [p['sku'] for p in rds_offers['products'].values() if p['attributes']['usagetype'] == search_type and p['attributes']['databaseEngine'] == search_engine]
+        skus = [p['sku'] for p in offers.rds['products'].values() if p['attributes']['usagetype'] == search_type and p['attributes']['databaseEngine'] == search_engine]
         if len(skus) != 1:
             raise Exception('found {} skus for {} {} in {} (expected 1)'.format(len(skus), self.type, self.engine, self.region))
 
-        for term in rds_offers['terms']['OnDemand'][skus[0]].values():
+        for term in offers.rds['terms']['OnDemand'][skus[0]].values():
             for dimension in term['priceDimensions'].values():
                 yield Cost(dimension['pricePerUnit']['USD'], dimension['unit'])
 
@@ -213,7 +223,7 @@ class DBInstance(Instance):
             raise Exception('unknown search type for ' + self.storage_type)
         search_types = [region_usagetype[region] + search_type_prefix + t for t in search_types]
 
-        skus = [p['sku'] for p in rds_offers['products'].values() if p['attributes']['usagetype'] in search_types]
+        skus = [p['sku'] for p in offers.rds['products'].values() if p['attributes']['usagetype'] in search_types]
         # most regions are missing storage costs (!)
         # only ca-central-1, us-east-2, and eu-west-2 show up in the json
         if len(skus) == 0 and override_region is None:
@@ -227,7 +237,7 @@ class DBInstance(Instance):
 
         costs = defaultdict(float)
         for sku in skus:
-            for term in rds_offers['terms']['OnDemand'][sku].values():
+            for term in offers.rds['terms']['OnDemand'][sku].values():
                 for dimension in term['priceDimensions'].values():
                     c = Cost(dimension['pricePerUnit']['USD'], dimension['unit'])
                     if c.per.startswith('gb-'):
@@ -274,11 +284,11 @@ class CacheInstance(Instance):
     def unit_price(self):
         search_type = region_usagetype[self.region] + 'NodeUsage:' + self.type
 
-        skus = [p['sku'] for p in elasticache_offers['products'].values() if p['attributes']['usagetype'] == search_type and p['attributes']['cacheEngine'].lower() == self.engine]
+        skus = [p['sku'] for p in offers.elasticache['products'].values() if p['attributes']['usagetype'] == search_type and p['attributes']['cacheEngine'].lower() == self.engine]
         if len(skus) != 1:
             raise Exception('found {} skus for {} in {} (expected 1)'.format(len(skus), self.type, self.region))
 
-        for term in elasticache_offers['terms']['OnDemand'][skus[0]].values():
+        for term in offers.elasticache['terms']['OnDemand'][skus[0]].values():
             for dimension in term['priceDimensions'].values():
                 yield Cost(dimension['pricePerUnit']['USD'], dimension['unit'])
 
@@ -394,39 +404,22 @@ def print_instance_cost_table(instances, total=True):
     print(tabulate(table, headers=headers))
 
 
-def fetch_all_instances(regions=ALL_REGIONS):
-    instances = []
-    for region in regions:
-        client = boto3.client('ec2', region_name=region)
-        # instances = fetch_instance_info(Filters=[{'Name': 'tag:Environment', 'Values': ['TUS']}])
-        region_instances = fetch_instance_info(client)
-        fetch_volume_info(client, region_instances)
-        instances += region_instances
-
-    instances.sort(key=lambda x: x.name)
+def fetch_all_instances(region_name=None):
+    client = boto3.client('ec2', region_name=region_name)
+    # instances = fetch_instance_info(Filters=[{'Name': 'tag:Environment', 'Values': ['TUS']}])
+    instances = fetch_instance_info(client)
+    fetch_volume_info(client, instances)
     return instances
 
 
-def fetch_all_db_instances(regions=ALL_REGIONS):
-    instances = []
-    for region in regions:
-        client = boto3.client('rds', region_name=region)
-        region_instances = fetch_db_info(client)
-        instances += region_instances
-
-    instances.sort(key=lambda x: x.name)
-    return instances
+def fetch_all_db_instances(region_name=None):
+    client = boto3.client('rds', region_name=region_name)
+    return fetch_db_info(client)
 
 
-def fetch_all_cache_instances(regions=ALL_REGIONS):
-    instances = []
-    for region in regions:
-        client = boto3.client('elasticache', region_name=region)
-        region_instances = fetch_cache_info(client)
-        instances += region_instances
-
-    instances.sort(key=lambda x: x.name)
-    return instances
+def fetch_all_cache_instances(region_name=None):
+    client = boto3.client('elasticache', region_name=region_name)
+    return fetch_cache_info(client)
 
 
 def print_breakdown(instances):
@@ -447,7 +440,28 @@ def print_breakdown(instances):
 
 
 def main():
-    instances = fetch_all_instances() + fetch_all_db_instances() + fetch_all_cache_instances()
+    p = argparse.ArgumentParser()
+    p.add_argument('--ec2', action='store_true')
+    p.add_argument('--rds', action='store_true')
+    p.add_argument('--elasticache', action='store_true')
+    p.add_argument('--region', nargs='+', dest='regions', metavar='REGION')
+    p.add_argument('--all-regions', action='store_const', const=ALL_REGIONS, dest='regions')
+
+    args = p.parse_args()
+
+    # default to showing ec2, if nothing selected
+    if not any((args.ec2, args.rds, args.elasticache)):
+        args.ec2 = True
+
+    instances = []
+    for region in (args.regions or [None]):
+        if args.ec2:
+            instances += fetch_all_instances(region_name=region)
+        if args.rds:
+            instances += fetch_all_db_instances(region_name=region)
+        if args.elasticache:
+            instances += fetch_all_cache_instances(region_name=region)
+
     print_instance_cost_table(instances)
 
 if __name__ == '__main__':
