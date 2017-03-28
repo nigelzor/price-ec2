@@ -386,11 +386,11 @@ def just_one(costs, per):
 
 
 def build_instance_cost_table(instances):
-    headers = ('name', 'id', 'az', 'type', 'type $/hr', 'disk GB', 'disk $/mo', 'running $/day', 'state', 'actual $/day')
+    headers = ('name', 'id', 'az', 'type', 'type $/day', 'disk GB', 'disk $/day', 'running $/day', 'state', 'actual $/day')
 
     def build_row(i):
         instance_cost, storage_cost, total_cost, actual_cost = i.simple_costs()
-        return i.name, i.id, i.az, i.type, instance_cost.per_hour().dollars, i.total_storage, storage_cost.per_month().dollars, total_cost.per_day().dollars, i.state, actual_cost.per_day().dollars
+        return i.name, i.id, i.az, i.type, instance_cost.per_day().dollars, i.total_storage, storage_cost.per_day().dollars, total_cost.per_day().dollars, i.state, actual_cost.per_day().dollars
 
     return headers, [build_row(i) for i in instances]
 
