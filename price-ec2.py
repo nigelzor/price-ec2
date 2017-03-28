@@ -7,7 +7,7 @@ from collections import defaultdict
 
 import boto3
 from cached_property import cached_property
-from tabulate import tabulate
+from tabulate import tabulate, tabulate_formats
 
 ALL_REGIONS = ['us-east-1', 'us-west-2', 'eu-west-1', 'ca-central-1']
 
@@ -395,13 +395,13 @@ def build_instance_cost_table(instances):
     return headers, [build_row(i) for i in instances]
 
 
-def print_instance_cost_table(instances, total=True):
+def print_instance_cost_table(instances, total=True, tablefmt='simple'):
     headers, table = build_instance_cost_table(instances)
     # cost decreasing, name increasing
     table.sort(key=lambda x: (-x[-1], x[0]))
     if total:
         table.append(('Total', '', '', '', sum(r[4] for r in table), sum(r[5] for r in table), sum(r[6] for r in table), sum(r[7] for r in table), '', sum(r[9] for r in table)))
-    print(tabulate(table, headers=headers))
+    print(tabulate(table, headers=headers, tablefmt=tablefmt))
 
 
 def fetch_all_instances(region_name=None):
@@ -446,6 +446,7 @@ def main():
     p.add_argument('--elasticache', action='store_true')
     p.add_argument('--region', nargs='+', dest='regions', metavar='REGION')
     p.add_argument('--all-regions', action='store_const', const=ALL_REGIONS, dest='regions')
+    p.add_argument('--tablefmt', choices=tabulate_formats)
 
     args = p.parse_args()
 
@@ -462,7 +463,7 @@ def main():
         if args.elasticache:
             instances += fetch_all_cache_instances(region_name=region)
 
-    print_instance_cost_table(instances)
+    print_instance_cost_table(instances, tablefmt=args.tablefmt)
 
 if __name__ == '__main__':
     main()
