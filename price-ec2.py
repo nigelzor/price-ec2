@@ -444,6 +444,7 @@ def main():
     p.add_argument('--ec2', action='store_true')
     p.add_argument('--rds', action='store_true')
     p.add_argument('--elasticache', action='store_true')
+    p.add_argument('--all-services', action='store_true')
     p.add_argument('--region', nargs='+', dest='regions', metavar='REGION')
     p.add_argument('--all-regions', action='store_const', const=ALL_REGIONS, dest='regions')
     p.add_argument('--tablefmt', choices=tabulate_formats)
@@ -456,11 +457,11 @@ def main():
 
     instances = []
     for region in (args.regions or [None]):
-        if args.ec2:
+        if args.ec2 or args.all_services:
             instances += fetch_all_instances(region_name=region)
-        if args.rds:
+        if args.rds or args.all_services:
             instances += fetch_all_db_instances(region_name=region)
-        if args.elasticache:
+        if args.elasticache or args.all_services:
             instances += fetch_all_cache_instances(region_name=region)
 
     print_instance_cost_table(instances, tablefmt=args.tablefmt)
