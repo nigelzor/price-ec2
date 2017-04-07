@@ -4,6 +4,7 @@ import json
 import math
 import re
 from collections import defaultdict
+from datetime import datetime, timedelta
 
 import boto3
 from cached_property import cached_property
@@ -38,6 +39,7 @@ class Offers:
         with open('offers/v1.0/aws/AmazonElastiCache/current/index.json') as fh:
             return json.load(fh)
 
+
 offers = Offers()
 
 
@@ -48,6 +50,7 @@ class Instance:
         self.type = type
         self.state = state
         self.az = az
+        self.cpu_usage = None
 
     @property
     def running(self):
@@ -82,8 +85,22 @@ class Instance:
             actual_cost = storage_cost
         return instance_cost, storage_cost, total_cost, actual_cost
 
+    @property
+    def cloudwatch_namespace(self):
+        return self.CLOUDWATCH_NAMESPACE
+
+    @property
+    def cloudwatch_dimensions(self):
+        return [{
+            'Name': self.ID_DIMENSION,
+            'Value': self.id
+        }]
+
 
 class EC2Instance(Instance):
+    CLOUDWATCH_NAMESPACE = 'AWS/EC2'
+    ID_DIMENSION = 'InstanceId'
+
     def __init__(self, id, name, type, state, az):
         super().__init__(id, name, type, state, az)
         self.volumes = []
@@ -170,6 +187,9 @@ class Volume:
 
 
 class DBInstance(Instance):
+    CLOUDWATCH_NAMESPACE = 'AWS/RDS'
+    ID_DIMENSION = 'DBInstanceIdentifier'
+
     def __init__(self, id, name, type, engine, state, az, multi_az, storage_type, size, iops):
         super().__init__(id, name, type, state, az)
         self.engine = engine
@@ -272,6 +292,9 @@ class DBInstance(Instance):
 
 
 class CacheInstance(Instance):
+    CLOUDWATCH_NAMESPACE = 'AWS/ElastiCache'
+    ID_DIMENSION = 'CacheClusterId'  # this isn't quite right. we're ignoring CacheNodeId
+
     def __init__(self, id, name, type, state, region, engine):
         super().__init__(id, name, type, state, region)
         self._region = region
@@ -385,22 +408,39 @@ def just_one(costs, per):
     return costs[0]
 
 
-def build_instance_cost_table(instances):
+def build_instance_cost_table(instances, include_cpu=False):
     headers = ('name', 'id', 'az', 'type', 'type $/day', 'disk GB', 'disk $/day', 'running $/day', 'state', 'actual $/day')
+    if include_cpu:
+        headers += ('avg %cpu', 'max %cpu')  # hourly, but that's too much text to put in the column heading
 
     def build_row(i):
         instance_cost, storage_cost, total_cost, actual_cost = i.simple_costs()
-        return i.name, i.id, i.az, i.type, instance_cost.per_day().dollars, i.total_storage, storage_cost.per_day().dollars, total_cost.per_day().dollars, i.state, actual_cost.per_day().dollars
+        row = (i.name, i.id, i.az, i.type, instance_cost.per_day().dollars, i.total_storage, storage_cost.per_day().dollars, total_cost.per_day().dollars, i.state, actual_cost.per_day().dollars)
+        if include_cpu:
+            if i.cpu_usage and len(i.cpu_usage):
+                row += (round(sum(i.cpu_usage) / len(i.cpu_usage), 1), round(max(i.cpu_usage), 1))
+            else:
+                row += (None, None)
+        return row
 
     return headers, [build_row(i) for i in instances]
 
 
 def print_instance_cost_table(instances, total=True, tablefmt='simple'):
-    headers, table = build_instance_cost_table(instances)
+    include_cpu = any(i.cpu_usage for i in instances)
+    cost_index = -1
+    if include_cpu:
+        cost_index = -3
+
+    headers, table = build_instance_cost_table(instances, include_cpu=include_cpu)
     # cost decreasing, name increasing
-    table.sort(key=lambda x: (-x[-1], x[0]))
+    table.sort(key=lambda x: (-x[cost_index], x[0]))
     if total:
-        table.append(('Total', '', '', '', sum(r[4] for r in table), sum(r[5] for r in table), sum(r[6] for r in table), sum(r[7] for r in table), '', sum(r[9] for r in table)))
+        total_row = ('Total', '', '', '', sum(r[4] for r in table), sum(r[5] for r in table), sum(r[6] for r in table),
+                     sum(r[7] for r in table), '', sum(r[9] for r in table))
+        if include_cpu:
+            total_row += (None, None)
+        table.append(total_row)
     print(tabulate(table, headers=headers, tablefmt=tablefmt))
 
 
@@ -439,6 +479,28 @@ def print_breakdown(instances):
     print(tabulate(rows))
 
 
+def fetch_cpu_usage(instances, region_name=None):
+    client = boto3.client('cloudwatch', region_name=region_name)
+    end_time = datetime.now()
+    start_time = end_time + timedelta(weeks=-1)
+
+    for i in instances:
+        i.cpu_usage = cloudwatch_cpu_usage(client, i.cloudwatch_namespace, i.cloudwatch_dimensions, start_time, end_time)
+
+
+def cloudwatch_cpu_usage(client, namespace, dimensions, start_time, end_time):
+    stats = client.get_metric_statistics(
+        Namespace=namespace,
+        MetricName='CPUUtilization',
+        Dimensions=dimensions,
+        StartTime=start_time,
+        EndTime=end_time,
+        Period=3600,  # hourly
+        Statistics=['Average'],
+    )
+    return [p['Average'] for p in stats['Datapoints']]
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--ec2', action='store_true')
@@ -448,6 +510,7 @@ def main():
     p.add_argument('--region', nargs='+', dest='regions', metavar='REGION')
     p.add_argument('--all-regions', action='store_const', const=ALL_REGIONS, dest='regions')
     p.add_argument('--tablefmt', choices=tabulate_formats)
+    p.add_argument('--cpu-usage', action='store_true')  # note that this costs money; $0.01 per thousand requests
 
     args = p.parse_args()
 
@@ -455,8 +518,9 @@ def main():
     if not any((args.ec2, args.rds, args.elasticache)):
         args.ec2 = True
 
-    instances = []
+    all_instances = []
     for region in (args.regions or [None]):
+        instances = []
         if args.ec2 or args.all_services:
             instances += fetch_all_instances(region_name=region)
         if args.rds or args.all_services:
@@ -464,7 +528,13 @@ def main():
         if args.elasticache or args.all_services:
             instances += fetch_all_cache_instances(region_name=region)
 
-    print_instance_cost_table(instances, tablefmt=args.tablefmt)
+        if args.cpu_usage:
+            fetch_cpu_usage(instances, region_name=region)
+
+        all_instances += instances
+
+    print_instance_cost_table(all_instances, tablefmt=args.tablefmt)
+
 
 if __name__ == '__main__':
     main()
