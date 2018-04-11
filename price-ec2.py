@@ -119,7 +119,10 @@ class EC2Instance(Instance):
         else:
             search_type = region_usagetype[self.region] + 'BoxUsage:' + self.type
 
-        skus = [p['sku'] for p in offers.ec2['products'].values() if p['attributes']['usagetype'] == search_type and p['attributes']['operatingSystem'] == 'Linux']
+        def match(p):
+            return p['attributes']['usagetype'] == search_type and p['attributes']['operatingSystem'] == 'Linux' and p['attributes']['preInstalledSw'] == 'NA'
+
+        skus = [p['sku'] for p in offers.ec2['products'].values() if match(p)]
         if len(skus) != 1:
             raise Exception('found {} skus for {} in {} (expected 1)'.format(len(skus), self.type, self.region))
 
