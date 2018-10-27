@@ -13,3 +13,7 @@ venv:
 .libs: requirements.txt venv
 	./venv/bin/pip install -r requirements.txt
 	touch .libs
+
+.PHONY: lint
+lint:
+	./venv/bin/flake8 --ignore=E501 price-ec2.py
