@@ -329,7 +329,7 @@ class CacheInstance(Instance):
 
 
 class Cost:
-    _factors = dict(hrs=1, day=24, mo=24*30)
+    _factors = dict(hr=1, hrs=1, day=24, mo=24*30, yr=24*365)
 
     def __init__(self, dollars, per):
         self.dollars = float(dollars)
@@ -411,14 +411,17 @@ def just_one(costs, per):
     return costs[0]
 
 
-def build_instance_cost_table(instances, include_cpu=False):
-    headers = ('name', 'id', 'az', 'type', 'type $/day', 'disk GB', 'disk $/day', 'running $/day', 'state', 'actual $/day')
+def build_instance_cost_table(instances, include_cpu=False, per='day'):
+    headers = ('name', 'id', 'az', 'type', 'type $/' + per, 'disk GB', 'disk $/' + per, 'running $/' + per, 'state', 'actual $/' + per)
     if include_cpu:
         headers += ('avg %cpu', 'max %cpu')  # hourly, but that's too much text to put in the column heading
 
+    def dollars(stat):
+        return stat._convert(per).dollars
+
     def build_row(i):
         instance_cost, storage_cost, total_cost, actual_cost = i.simple_costs()
-        row = (i.name, i.id, i.az, i.type, instance_cost.per_day().dollars, i.total_storage, storage_cost.per_day().dollars, total_cost.per_day().dollars, i.state, actual_cost.per_day().dollars)
+        row = (i.name, i.id, i.az, i.type, dollars(instance_cost), i.total_storage, dollars(storage_cost), dollars(total_cost), i.state, dollars(actual_cost))
         if include_cpu:
             if i.cpu_usage and len(i.cpu_usage):
                 row += (round(sum(i.cpu_usage) / len(i.cpu_usage), 1), round(max(i.cpu_usage), 1))
@@ -429,13 +432,13 @@ def build_instance_cost_table(instances, include_cpu=False):
     return headers, [build_row(i) for i in instances]
 
 
-def print_instance_cost_table(instances, total=True, tablefmt='simple'):
+def print_instance_cost_table(instances, total=True, tablefmt='simple', per='day'):
     include_cpu = any(i.cpu_usage for i in instances)
     cost_index = -1
     if include_cpu:
         cost_index = -3
 
-    headers, table = build_instance_cost_table(instances, include_cpu=include_cpu)
+    headers, table = build_instance_cost_table(instances, include_cpu=include_cpu, per=per)
     # cost decreasing, name increasing
     table.sort(key=lambda x: (-x[cost_index], x[0]))
     if total:
@@ -514,6 +517,7 @@ def main():
     p.add_argument('--all-regions', action='store_const', const=ALL_REGIONS, dest='regions')
     p.add_argument('--tablefmt', choices=tabulate_formats)
     p.add_argument('--cpu-usage', action='store_true')  # note that this costs money; $0.01 per thousand requests
+    p.add_argument('--cost-per', choices=['hr', 'day', 'mo', 'yr'], default='day')
 
     args = p.parse_args()
 
@@ -536,7 +540,7 @@ def main():
 
         all_instances += instances
 
-    print_instance_cost_table(all_instances, tablefmt=args.tablefmt)
+    print_instance_cost_table(all_instances, tablefmt=args.tablefmt, per=args.cost_per)
 
 
 if __name__ == '__main__':
