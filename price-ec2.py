@@ -2,7 +2,6 @@
 import argparse
 import json
 import math
-import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -329,7 +328,7 @@ class CacheInstance(Instance):
 
 
 class Cost:
-    _factors = dict(hr=1, hrs=1, day=24, mo=24*30, yr=24*365)
+    _factors = dict(hr=1, hrs=1, day=24, mo=24 * 30, yr=24 * 365)
 
     def __init__(self, dollars, per):
         self.dollars = float(dollars)
@@ -466,23 +465,6 @@ def fetch_all_db_instances(region_name=None):
 def fetch_all_cache_instances(region_name=None):
     client = boto3.client('elasticache', region_name=region_name)
     return fetch_cache_info(client)
-
-
-def print_breakdown(instances):
-    count = defaultdict(int)
-    cost = defaultdict(float)
-    for i in instances:
-        instance_cost, storage_cost, total_cost, actual_cost = i.simple_costs()
-
-        m = re.search('(...)\d?(.+?)\d*$', i.name)
-        if m:
-            env, cat = m.groups()
-            count[(env, cat)] += 1
-            cost[(env, cat)] += actual_cost.per_day().dollars
-
-    rows = [(k[0], k[1], count[k], cost[k]) for k in count.keys()]
-    rows.sort(key=lambda x: (-x[-1], x[0], x[1]))
-    print(tabulate(rows))
 
 
 def fetch_cpu_usage(instances, region_name=None):
