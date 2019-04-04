@@ -2,8 +2,10 @@
 import argparse
 import json
 import math
+import sys
 from collections import defaultdict
 from datetime import datetime, timedelta
+from contextlib import contextmanager
 
 import boto3
 from cached_property import cached_property
@@ -22,21 +24,33 @@ region_usagetype = {
 }
 
 
+@contextmanager
+def progress(message):
+    print('% {}...'.format(message), file=sys.stderr)
+    try:
+        yield
+    finally:
+        pass
+
+
 class Offers:
     @cached_property
     def ec2(self):
-        with open('offers/v1.0/aws/AmazonEC2/current/index.json') as fh:
-            return json.load(fh)
+        with progress('loading EC2 offers JSON'):
+            with open('offers/v1.0/aws/AmazonEC2/current/index.json') as fh:
+                return json.load(fh)
 
     @cached_property
     def rds(self):
-        with open('offers/v1.0/aws/AmazonRDS/current/index.json') as fh:
-            return json.load(fh)
+        with progress('loading RDS offers JSON'):
+            with open('offers/v1.0/aws/AmazonRDS/current/index.json') as fh:
+                return json.load(fh)
 
     @cached_property
     def elasticache(self):
-        with open('offers/v1.0/aws/AmazonElastiCache/current/index.json') as fh:
-            return json.load(fh)
+        with progress('loading ElastiCache offers JSON'):
+            with open('offers/v1.0/aws/AmazonElastiCache/current/index.json') as fh:
+                return json.load(fh)
 
 
 offers = Offers()
@@ -450,21 +464,24 @@ def print_instance_cost_table(instances, total=True, tablefmt='simple', per='day
 
 
 def fetch_all_instances(region_name=None):
-    client = boto3.client('ec2', region_name=region_name)
-    # instances = fetch_instance_info(Filters=[{'Name': 'tag:Environment', 'Values': ['TUS']}])
-    instances = fetch_instance_info(client)
-    fetch_volume_info(client, instances)
-    return instances
+    with progress('fetching EC2 instances'):
+        client = boto3.client('ec2', region_name=region_name)
+        # instances = fetch_instance_info(Filters=[{'Name': 'tag:Environment', 'Values': ['TUS']}])
+        instances = fetch_instance_info(client)
+        fetch_volume_info(client, instances)
+        return instances
 
 
 def fetch_all_db_instances(region_name=None):
-    client = boto3.client('rds', region_name=region_name)
-    return fetch_db_info(client)
+    with progress('fetching RDS instances'):
+        client = boto3.client('rds', region_name=region_name)
+        return fetch_db_info(client)
 
 
 def fetch_all_cache_instances(region_name=None):
-    client = boto3.client('elasticache', region_name=region_name)
-    return fetch_cache_info(client)
+    with progress('fetching ElastiCache instances'):
+        client = boto3.client('elasticache', region_name=region_name)
+        return fetch_cache_info(client)
 
 
 def fetch_cpu_usage(instances, region_name=None):
