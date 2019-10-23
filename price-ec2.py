@@ -1,15 +1,19 @@
 #!/usr/bin/env python
 import argparse
-import json
 import math
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta
 from contextlib import contextmanager
+from functools import lru_cache
 
 import boto3
 from cached_property import cached_property
 from tabulate import tabulate, tabulate_formats
+import requests
+from cachecontrol import CacheControl
+from cachecontrol.caches.file_cache import FileCache
+from xdg import XDG_CACHE_HOME
 
 ALL_REGIONS = ['us-east-1', 'us-west-2', 'eu-west-1', 'ca-central-1']
 
@@ -34,23 +38,38 @@ def progress(message):
 
 
 class Offers:
-    @cached_property
-    def ec2(self):
-        with progress('loading EC2 offers JSON'):
-            with open('offers/v1.0/aws/AmazonEC2/current/index.json') as fh:
-                return json.load(fh)
+    cache_dir = XDG_CACHE_HOME / 'price-ec2' / 'http'
+    session = CacheControl(requests.Session(), cache=FileCache(cache_dir))
 
-    @cached_property
-    def rds(self):
-        with progress('loading RDS offers JSON'):
-            with open('offers/v1.0/aws/AmazonRDS/current/index.json') as fh:
-                return json.load(fh)
+    def prices(self, service, region=None):
+        def fetch_json(url):
+            with progress('fetching ' + url):
+                response = self.session.get('https://pricing.us-east-1.amazonaws.com' + url)
+                response.raise_for_status()
+                return response.json()
 
-    @cached_property
-    def elasticache(self):
-        with progress('loading ElastiCache offers JSON'):
-            with open('offers/v1.0/aws/AmazonElastiCache/current/index.json') as fh:
-                return json.load(fh)
+        index_url = '/offers/v1.0/aws/index.json'
+        index = fetch_json(index_url)
+        if region:
+            region_index_url = index['offers'][service]['currentRegionIndexUrl']
+            region_index = fetch_json(region_index_url)
+            region_url = region_index['regions'][region]['currentVersionUrl']
+            return fetch_json(region_url)
+        else:
+            current_url = index['offers'][service]['currentVersionUrl']
+            return fetch_json(current_url)
+
+    @lru_cache()
+    def ec2(self, region):
+        return self.prices('AmazonEC2', region)
+
+    @lru_cache()
+    def rds(self, region):
+        return self.prices('AmazonRDS', region)
+
+    @lru_cache()
+    def elasticache(self, region):
+        return self.prices('AmazonElastiCache', region)
 
 
 offers = Offers()
@@ -135,11 +154,11 @@ class EC2Instance(Instance):
         def match(p):
             return p['attributes']['usagetype'] == search_type and p['attributes']['operatingSystem'] == 'Linux' and p['attributes']['preInstalledSw'] == 'NA'
 
-        skus = [p['sku'] for p in offers.ec2['products'].values() if match(p)]
+        skus = [p['sku'] for p in offers.ec2(self.region)['products'].values() if match(p)]
         if len(skus) != 1:
             raise Exception('found {} skus for {} in {} (expected 1)'.format(len(skus), self.type, self.region))
 
-        for term in offers.ec2['terms']['OnDemand'][skus[0]].values():
+        for term in offers.ec2(self.region)['terms']['OnDemand'][skus[0]].values():
             for dimension in term['priceDimensions'].values():
                 yield Cost(dimension['pricePerUnit']['USD'], dimension['unit'])
 
@@ -172,13 +191,14 @@ class EC2Instance(Instance):
         az = json['Placement']['AvailabilityZone']
         instance = EC2Instance(id, name, type, state, az)
         for mapping in json['BlockDeviceMappings']:
-            instance.volumes.append(Volume(mapping['Ebs']['VolumeId']))
+            instance.volumes.append(Volume(mapping['Ebs']['VolumeId'], instance.region))
         return instance
 
 
 class Volume:
-    def __init__(self, id):
+    def __init__(self, id, region):
         self.id = id
+        self.region = region
         self.type = None
         self.size = None
         self.iops = None
@@ -192,12 +212,12 @@ class Volume:
             search_types = ['EBS:VolumeUsage.' + self.type]
         search_types = [region_usagetype[region] + t for t in search_types]
 
-        skus = [p['sku'] for p in offers.ec2['products'].values() if p['attributes']['usagetype'] in search_types]
+        skus = [p['sku'] for p in offers.ec2(self.region)['products'].values() if p['attributes']['usagetype'] in search_types]
         if len(skus) != len(search_types):
             raise Exception('found {} skus for {} in {} (expected {})'.format(len(skus), self.type, region, len(search_types)))
 
         for sku in skus:
-            for term in offers.ec2['terms']['OnDemand'][sku].values():
+            for term in offers.ec2(self.region)['terms']['OnDemand'][sku].values():
                 for dimension in term['priceDimensions'].values():
                     yield Cost(dimension['pricePerUnit']['USD'], dimension['unit'])
 
@@ -231,11 +251,11 @@ class DBInstance(Instance):
         else:
             search_engine = self.engine
 
-        skus = [p['sku'] for p in offers.rds['products'].values() if p['attributes']['usagetype'] == search_type and p['attributes']['databaseEngine'] == search_engine]
+        skus = [p['sku'] for p in offers.rds(self.region)['products'].values() if p['attributes']['usagetype'] == search_type and p['attributes']['databaseEngine'] == search_engine]
         if len(skus) != 1:
             raise Exception('found {} skus for {} {} in {} (expected 1)'.format(len(skus), self.type, self.engine, self.region))
 
-        for term in offers.rds['terms']['OnDemand'][skus[0]].values():
+        for term in offers.rds(self.region)['terms']['OnDemand'][skus[0]].values():
             for dimension in term['priceDimensions'].values():
                 yield Cost(dimension['pricePerUnit']['USD'], dimension['unit'])
 
@@ -259,7 +279,7 @@ class DBInstance(Instance):
             raise Exception('unknown search type for ' + self.storage_type)
         search_types = [region_usagetype[region] + search_type_prefix + t for t in search_types]
 
-        skus = [p['sku'] for p in offers.rds['products'].values() if p['attributes']['usagetype'] in search_types]
+        skus = [p['sku'] for p in offers.rds(self.region)['products'].values() if p['attributes']['usagetype'] in search_types]
         # most regions are missing storage costs (!)
         # only ca-central-1, us-east-2, and eu-west-2 show up in the json
         if len(skus) == 0 and override_region is None:
@@ -273,7 +293,7 @@ class DBInstance(Instance):
 
         costs = defaultdict(float)
         for sku in skus:
-            for term in offers.rds['terms']['OnDemand'][sku].values():
+            for term in offers.rds(self.region)['terms']['OnDemand'][sku].values():
                 for dimension in term['priceDimensions'].values():
                     c = Cost(dimension['pricePerUnit']['USD'], dimension['unit'])
                     if c.per.startswith('gb-'):
@@ -323,11 +343,11 @@ class CacheInstance(Instance):
     def unit_price(self):
         search_type = region_usagetype[self.region] + 'NodeUsage:' + self.type
 
-        skus = [p['sku'] for p in offers.elasticache['products'].values() if p['attributes']['usagetype'] == search_type and p['attributes']['cacheEngine'].lower() == self.engine]
+        skus = [p['sku'] for p in offers.elasticache(self.region)['products'].values() if p['attributes']['usagetype'] == search_type and p['attributes']['cacheEngine'].lower() == self.engine]
         if len(skus) != 1:
             raise Exception('found {} skus for {} in {} (expected 1)'.format(len(skus), self.type, self.region))
 
-        for term in offers.elasticache['terms']['OnDemand'][skus[0]].values():
+        for term in offers.elasticache(self.region)['terms']['OnDemand'][skus[0]].values():
             for dimension in term['priceDimensions'].values():
                 yield Cost(dimension['pricePerUnit']['USD'], dimension['unit'])
 
