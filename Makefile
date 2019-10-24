@@ -1,5 +1,8 @@
 all: .libs offers
 
+PATH := $(PWD)/venv/bin:$(PATH)
+SHELL := env PATH=$(PATH) /bin/bash
+
 .PHONY: offers
 offers:
 	wget --compression=auto -N -r -nH https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/index.json \
@@ -11,7 +14,7 @@ venv:
 	virtualenv -p python3 venv
 
 .libs: requirements.txt venv
-	./venv/bin/pip install -r requirements.txt
+	pip install -r requirements.txt
 	touch .libs
 
 .PHONY: ci
@@ -19,4 +22,4 @@ ci: lint
 
 .PHONY: lint
 lint:
-	./venv/bin/flake8 --ignore=E501 price-ec2.py
+	flake8 --ignore=E501 price-ec2.py
