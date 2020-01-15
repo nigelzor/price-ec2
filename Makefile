@@ -4,7 +4,7 @@ PATH := $(PWD)/venv/bin:$(PATH)
 SHELL := env PATH=$(PATH) /bin/bash
 
 venv:
-	virtualenv -p python3 venv
+	python3 -m venv venv
 
 .libs: requirements.txt venv
 	pip install -r requirements.txt
