@@ -1,0 +1,6 @@
+boto3
+cached-property
+tabulate
+flake8
+CacheControl[filecache]
+xdg
