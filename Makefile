@@ -5,6 +5,7 @@ SHELL := env PATH=$(PATH) /bin/bash
 
 venv:
 	python3 -m venv venv
+	pip install --upgrade pip setuptools wheel
 
 requirements.txt: requirements-to-freeze.txt venv
 	pip install -r requirements-to-freeze.txt --upgrade

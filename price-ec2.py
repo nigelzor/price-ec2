@@ -240,19 +240,26 @@ class DBInstance(Instance):
 
     def unit_price(self):
         if self.multi_az:
-            search_type = region_usagetype[self.region] + 'Multi-AZUsage:' + self.type
+            deployment_option = 'Multi-AZ'
         else:
-            search_type = region_usagetype[self.region] + 'InstanceUsage:' + self.type
+            deployment_option = 'Single-AZ'
 
         if self.engine == 'postgres':
-            search_engine = 'PostgreSQL'
+            database_engine = 'PostgreSQL'
         elif self.engine == 'mysql':
-            search_engine = 'MySQL'
+            database_engine = 'MySQL'
         else:
-            search_engine = self.engine
+            database_engine = self.engine
 
-        skus = [p['sku'] for p in offers.rds(self.region)['products'].values() if p['attributes']['usagetype'] == search_type and p['attributes']['databaseEngine'] == search_engine]
+        def matches(product):
+            return product['attributes'].get('instanceType') == self.type \
+                and product['attributes']['databaseEngine'] == database_engine \
+                and product['attributes']['deploymentOption'] == deployment_option
+
+        skus = [p['sku'] for p in offers.rds(self.region)['products'].values() if matches(p)]
         if len(skus) != 1:
+            for x in skus:
+                print(offers.rds(self.region)['products'][x])
             raise Exception('found {} skus for {} {} in {} (expected 1)'.format(len(skus), self.type, self.engine, self.region))
 
         for term in offers.rds(self.region)['terms']['OnDemand'][skus[0]].values():
