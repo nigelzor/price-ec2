@@ -133,8 +133,9 @@ class EC2Instance(Instance):
     CLOUDWATCH_NAMESPACE = 'AWS/EC2'
     ID_DIMENSION = 'InstanceId'
 
-    def __init__(self, id, name, type, state, az):
+    def __init__(self, id, name, type, state, az, platform):
         super().__init__(id, name, type, state, az)
+        self.platform = platform
         self.volumes = []
 
     @property
@@ -152,10 +153,14 @@ class EC2Instance(Instance):
             search_type = region_usagetype[self.region] + 'BoxUsage:' + self.type
 
         def match(p):
-            return p['attributes']['usagetype'] == search_type and p['attributes']['operatingSystem'] == 'Linux' and p['attributes']['preInstalledSw'] == 'NA'
+            return p['attributes']['usagetype'] == search_type \
+                and p['attributes']['operatingSystem'].lower() == self.platform \
+                and p['attributes']['preInstalledSw'] == 'NA'
 
         skus = [p['sku'] for p in offers.ec2(self.region)['products'].values() if match(p)]
         if len(skus) != 1:
+            for x in skus:
+                print(offers.ec2(self.region)['products'][x])
             raise Exception('found {} skus for {} in {} (expected 1)'.format(len(skus), self.type, self.region))
 
         for term in offers.ec2(self.region)['terms']['OnDemand'][skus[0]].values():
@@ -189,7 +194,8 @@ class EC2Instance(Instance):
         type = json['InstanceType']
         state = json['State']['Name']
         az = json['Placement']['AvailabilityZone']
-        instance = EC2Instance(id, name, type, state, az)
+        platform = json.get('Platform', 'linux')
+        instance = EC2Instance(id, name, type, state, az, platform)
         for mapping in json['BlockDeviceMappings']:
             instance.volumes.append(Volume(mapping['Ebs']['VolumeId'], instance.region))
         return instance
