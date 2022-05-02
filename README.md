@@ -4,6 +4,5 @@
 ## usage
 ```
 make
-. venv/bin/activate
-./price-ec2.py
+./venv/bin/price-ec2
 ```

@@ -8,14 +8,15 @@ venv:
 	pip install --upgrade pip setuptools wheel
 	pip install -r requirements.txt -r requirements-dev.txt
 
-requirements.txt: requirements.in
-	pip-compile requirements.in
+requirements.txt: setup.py
+	pip-compile
 
-requirements-dev.txt: requirements-dev.in
+requirements-dev.txt: requirements-dev.in requirements.txt
 	pip-compile requirements-dev.in
 
-.libs: requirements.txt requirements-dev.txt venv
+.libs: setup.py requirements.txt requirements-dev.txt venv
 	pip-sync requirements.txt requirements-dev.txt
+	pip install -e .
 	touch .libs
 
 .PHONY: ci
