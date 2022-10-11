@@ -244,22 +244,23 @@ class DBInstance(Instance):
     def total_storage(self):
         return self.size
 
+    @property
+    def database_engine(self):
+        if self.engine == 'postgres':
+            return 'PostgreSQL'
+        elif self.engine == 'mysql':
+            return 'MySQL'
+        return self.engine
+
     def unit_price(self):
         if self.multi_az:
             deployment_option = 'Multi-AZ'
         else:
             deployment_option = 'Single-AZ'
 
-        if self.engine == 'postgres':
-            database_engine = 'PostgreSQL'
-        elif self.engine == 'mysql':
-            database_engine = 'MySQL'
-        else:
-            database_engine = self.engine
-
         def matches(product):
             return product['attributes'].get('instanceType') == self.type \
-                and product['attributes']['databaseEngine'] == database_engine \
+                and product['attributes']['databaseEngine'] == self.database_engine \
                 and product['attributes']['deploymentOption'] == deployment_option
 
         skus = [p['sku'] for p in offers.rds(self.region)['products'].values() if matches(p)]
@@ -292,7 +293,12 @@ class DBInstance(Instance):
             raise Exception('unknown search type for ' + self.storage_type)
         search_types = [region_usagetype[region] + search_type_prefix + t for t in search_types]
 
-        skus = [p['sku'] for p in offers.rds(self.region)['products'].values() if p['attributes']['usagetype'] in search_types]
+        def matches(product):
+            return product['attributes']['usagetype'] in search_types \
+                   and product['attributes']['databaseEngine'] == self.database_engine
+
+        skus = [p['sku'] for p in offers.rds(self.region)['products'].values() if matches(p)]
+
         # most regions are missing storage costs (!)
         # only ca-central-1, us-east-2, and eu-west-2 show up in the json
         if len(skus) == 0 and override_region is None:
