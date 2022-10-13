@@ -71,6 +71,10 @@ class Offers:
     def elasticache(self, region):
         return self.prices('AmazonElastiCache', region)
 
+    @lru_cache()
+    def ecs(self, region):
+        return self.prices('AmazonECS', region)
+
 
 offers = Offers()
 
@@ -294,8 +298,7 @@ class DBInstance(Instance):
         search_types = [region_usagetype[region] + search_type_prefix + t for t in search_types]
 
         def matches(product):
-            return product['attributes']['usagetype'] in search_types \
-                   and product['attributes']['databaseEngine'] == self.database_engine
+            return product['attributes']['usagetype'] in search_types and product['attributes']['databaseEngine'] == self.database_engine
 
         skus = [p['sku'] for p in offers.rds(self.region)['products'].values() if matches(p)]
 
@@ -380,8 +383,60 @@ class CacheInstance(Instance):
         return CacheInstance(id, name, type, state, region, engine)
 
 
+class FargateInstance(Instance):
+    CLOUDWATCH_NAMESPACE = 'AWS/ECS'
+    # ID_DIMENSION doesn't work -- stat is by cluster/service not instance
+
+    def __init__(self, id, name, cpu, memory, arch, region):
+        super().__init__(id, name, f'{cpu}/{memory} ({arch})', 'running', None)
+        self._region = region
+        self.cpu = cpu
+        self.memory = memory
+        self.arch = arch
+
+    @property
+    def region(self):
+        return self._region
+
+    def unit_price(self):
+        cpu_usagetype = {
+            'x86_64': 'Fargate-vCPU-Hours:perCPU',
+            'ARM64': 'Fargate-ARM-vCPU-Hours:perCPU',
+        }
+        search_type = region_usagetype[self.region] + cpu_usagetype[self.arch]
+        skus = [p['sku'] for p in offers.ecs(self.region)['products'].values() if p['attributes']['usagetype'] == search_type]
+        if len(skus) != 1:
+            raise Exception('found {} skus for {} in {} (expected 1)'.format(len(skus), search_type, self.region))
+
+        for term in offers.ecs(self.region)['terms']['OnDemand'][skus[0]].values():
+            for dimension in term['priceDimensions'].values():
+                yield Cost(dimension['pricePerUnit']['USD'], dimension['unit']) * self.cpu
+
+        memory_usagetype = {
+            'x86_64': 'Fargate-GB-Hours',
+            'ARM64': 'Fargate-ARM-GB-Hours',
+        }
+        search_type = region_usagetype[self.region] + memory_usagetype[self.arch]
+        skus = [p['sku'] for p in offers.ecs(self.region)['products'].values() if p['attributes']['usagetype'] == search_type]
+        if len(skus) != 1:
+            raise Exception('found {} skus for {} in {} (expected 1)'.format(len(skus), search_type, self.region))
+
+        for term in offers.ecs(self.region)['terms']['OnDemand'][skus[0]].values():
+            for dimension in term['priceDimensions'].values():
+                yield Cost(dimension['pricePerUnit']['USD'], dimension['unit']) * (self.memory / 1024)
+
+    @staticmethod
+    def from_json(json, region):
+        id = json['taskArn'].split('/', 1)[1]
+        name = json['taskDefinitionArn'].split('/', 1)[1]
+        cpu = int(json['cpu']) / 1024
+        memory = int(json['memory'])
+        arch = [a['value'] for a in json['attributes'] if a['name'] == 'ecs.cpu-architecture'][0]
+        return FargateInstance(id, name, cpu, memory, arch, region)
+
+
 class Cost:
-    _factors = dict(hr=1, hrs=1, day=24, mo=24 * 30, yr=24 * 365)
+    _factors = dict(hr=1, hrs=1, hours=1, day=24, mo=24 * 30, yr=24 * 365)
 
     def __init__(self, dollars, per):
         self.dollars = float(dollars)
@@ -401,6 +456,9 @@ class Cost:
 
     def per_month(self):
         return self._convert('Mo')
+
+    def __mul__(self, other):
+        return Cost(self.dollars * other, self.per)
 
     def __str__(self):
         if math.isnan(self.dollars):
@@ -457,10 +515,33 @@ def fetch_cache_info(client, **kwargs):
     return result
 
 
+def fetch_fargate_info(client, **kwargs):
+    result = []
+    clusters = client.list_clusters(**kwargs)['clusterArns']
+    for cluster in clusters:
+        tasks = client.list_tasks(cluster=cluster, launchType='FARGATE')['taskArns']
+        if tasks:
+            tasks = client.describe_tasks(cluster=cluster, tasks=tasks)['tasks']
+            for t in tasks:
+                result.append(FargateInstance.from_json(t, client.meta.region_name))
+    return result
+
+
 def just_one(costs, per):
-    if len(costs) != 1:
+    """
+    >>> just_one([], 'hr')
+    Cost(nan, 'hr')
+    >>> just_one([Cost(1, 'day')], 'hr')
+    Cost(1.0, 'day')
+    >>> just_one([Cost(1, 'day'), Cost(2, 'day')], 'hr')
+    Cost(3.0, 'day')
+    """
+    if len(costs) < 1:
         return Cost(math.nan, per)
-    return costs[0]
+    total = costs[0]
+    for c in costs[1:]:
+        total += c
+    return total
 
 
 def build_instance_cost_table(instances, include_cpu=False, per='day'):
@@ -523,6 +604,12 @@ def fetch_all_cache_instances(region_name=None):
         return fetch_cache_info(client)
 
 
+def fetch_all_fargate_instances(region_name=None):
+    with progress('fetching Fargate instances'):
+        client = boto3.client('ecs', region_name=region_name)
+        return fetch_fargate_info(client)
+
+
 def fetch_cpu_usage(instances, region_name=None):
     client = boto3.client('cloudwatch', region_name=region_name)
     end_time = datetime.now()
@@ -550,6 +637,7 @@ def main():
     p.add_argument('--ec2', action='store_true')
     p.add_argument('--rds', action='store_true')
     p.add_argument('--elasticache', action='store_true')
+    p.add_argument('--fargate', action='store_true')
     p.add_argument('--all-services', action='store_true')
     p.add_argument('--region', nargs='+', dest='regions', metavar='REGION')
     p.add_argument('--all-regions', action='store_const', const=ALL_REGIONS, dest='regions')
@@ -560,7 +648,7 @@ def main():
     args = p.parse_args()
 
     # default to showing ec2, if nothing selected
-    if not any((args.ec2, args.rds, args.elasticache)):
+    if not any((args.ec2, args.rds, args.elasticache, args.fargate)):
         args.ec2 = True
 
     all_instances = []
@@ -572,6 +660,8 @@ def main():
             instances += fetch_all_db_instances(region_name=region)
         if args.elasticache or args.all_services:
             instances += fetch_all_cache_instances(region_name=region)
+        if args.fargate or args.all_services:
+            instances += fetch_all_fargate_instances(region_name=region)
 
         if args.cpu_usage:
             fetch_cpu_usage(instances, region_name=region)
