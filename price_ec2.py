@@ -502,7 +502,8 @@ def fetch_volume_info(client, instances):
 def fetch_db_info(client, **kwargs):
     db_metadata = client.describe_db_instances(**kwargs)
 
-    return [DBInstance.from_json(d) for d in db_metadata['DBInstances']]
+    # TODO: DocumentDB instances get returned here, but use a totally different pricing model
+    return [DBInstance.from_json(d) for d in db_metadata['DBInstances'] if d['Engine'] != 'docdb']
 
 
 def fetch_cache_info(client, **kwargs):
