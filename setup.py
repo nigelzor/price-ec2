@@ -8,7 +8,6 @@ setup(
         'boto3',
         'cached-property',
         'tabulate',
-        'CacheControl[filecache]',
         'xdg',
     ],
     entry_points={

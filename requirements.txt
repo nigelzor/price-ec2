@@ -10,28 +10,14 @@ botocore==1.34.55
     # via
     #   boto3
     #   s3transfer
-cachecontrol[filecache]==0.14.0
-    # via price-ec2 (setup.py)
 cached-property==1.5.2
     # via price-ec2 (setup.py)
-certifi==2024.2.2
-    # via requests
-charset-normalizer==3.3.2
-    # via requests
-filelock==3.13.1
-    # via cachecontrol
-idna==3.6
-    # via requests
 jmespath==1.0.1
     # via
     #   boto3
     #   botocore
-msgpack==1.0.8
-    # via cachecontrol
 python-dateutil==2.9.0.post0
     # via botocore
-requests==2.31.0
-    # via cachecontrol
 s3transfer==0.10.0
     # via boto3
 six==1.16.0
@@ -39,8 +25,6 @@ six==1.16.0
 tabulate==0.9.0
     # via price-ec2 (setup.py)
 urllib3==2.0.7
-    # via
-    #   botocore
-    #   requests
+    # via botocore
 xdg==6.0.0
     # via price-ec2 (setup.py)
