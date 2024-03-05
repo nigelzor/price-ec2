@@ -20,8 +20,12 @@ requirements-dev.txt: requirements-dev.in requirements.txt
 	touch .libs
 
 .PHONY: ci
-ci: lint
+ci: lint test
 
 .PHONY: lint
 lint: .libs
 	flake8 --ignore=E501 --exclude venv .
+
+.PHONY: test
+test: .libs
+	python3 -m doctest price_ec2.py
