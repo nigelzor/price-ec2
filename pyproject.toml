@@ -1,0 +1,6 @@
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.ruff.lint]
+select = ["E", "F", "UP", "B", "I", "RUF100"]
+ignore = ["E501"]

@@ -24,7 +24,7 @@ ci: lint test
 
 .PHONY: lint
 lint: .libs
-	flake8 --ignore=E501 --exclude venv .
+	ruff check
 
 .PHONY: test
 test: .libs

@@ -5,8 +5,8 @@ import math
 import shutil
 import sys
 from collections import defaultdict
-from datetime import datetime, timedelta
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from functools import lru_cache
 
 import boto3
@@ -29,7 +29,7 @@ region_usagetype = {
 
 @contextmanager
 def progress(message):
-    print('% {}...'.format(message), file=sys.stderr)
+    print(f'% {message}...', file=sys.stderr)
     try:
         yield
     finally:
@@ -60,7 +60,7 @@ def fetch_pricing_(service, filters):
     )
     prices = response['PriceList']
     if len(prices) != 1:
-        raise Exception('found {} prices for {} (expected 1)'.format(len(prices), filters))
+        raise Exception(f'found {len(prices)} prices for {filters} (expected 1)')
     return json.loads(prices[0])
 
 
@@ -427,15 +427,15 @@ class Cost:
 
     def __str__(self):
         if math.isnan(self.dollars):
-            return '?/{}'.format(self.per)
-        return '{self.dollars:.3g}/{self.per}'.format(self=self)
+            return f'?/{self.per}'
+        return f'{self.dollars:.3g}/{self.per}'
 
     def __repr__(self):
-        return 'Cost({self.dollars!r}, {self.per!r})'.format(self=self)
+        return f'Cost({self.dollars!r}, {self.per!r})'
 
     def __add__(self, other):
         if self.per != other.per:
-            raise Exception("can't add {} and {}".format(self.per, other.per))
+            raise Exception(f"can't add {self.per} and {other.per}")
         return Cost(self.dollars + other.dollars, self.per)
 
 
@@ -476,7 +476,7 @@ def fetch_cache_info(client, **kwargs):
 
     result = []
     for c in cache_metadata['CacheClusters']:
-        for i in range(c['NumCacheNodes']):
+        for _ in range(c['NumCacheNodes']):
             result.append(CacheInstance.from_json(c, client.meta.region_name))
     return result
 
