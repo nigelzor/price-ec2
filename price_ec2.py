@@ -7,10 +7,9 @@ import sys
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta
-from functools import lru_cache
+from functools import cached_property, lru_cache
 
 import boto3
-from cached_property import cached_property
 from tabulate import tabulate, tabulate_formats
 from xdg import XDG_CACHE_HOME
 
@@ -42,7 +41,9 @@ shutil.rmtree(cache_dir, ignore_errors=True)
 
 
 def fetch_pricing(service, filters):
-    return fetch_pricing_(service, tuple((k, filters[k]) for k in sorted(filters.keys())))
+    return fetch_pricing_(
+        service, tuple((k, filters[k]) for k in sorted(filters.keys()))
+    )
 
 
 @lru_cache(maxsize=1024)
@@ -55,8 +56,9 @@ def fetch_pricing_(service, filters):
                 'Type': 'TERM_MATCH',
                 'Field': field,
                 'Value': value,
-            } for (field, value) in filters
-        ]
+            }
+            for (field, value) in filters
+        ],
     )
     prices = response['PriceList']
     if len(prices) != 1:
@@ -112,10 +114,7 @@ class Instance:
 
     @property
     def cloudwatch_dimensions(self):
-        return [{
-            'Name': self.ID_DIMENSION,
-            'Value': self.id
-        }]
+        return [{'Name': self.ID_DIMENSION, 'Value': self.id}]
 
 
 class EC2Instance(Instance):
@@ -141,12 +140,15 @@ class EC2Instance(Instance):
         else:
             search_type = region_usagetype[self.region] + 'BoxUsage:' + self.type
 
-        cpu_pricing = fetch_pricing('AmazonEC2', {
-            'regionCode': self.region,
-            'usageType': search_type,
-            'operatingSystem': self.platform,
-            'preInstalledSw': 'NA'
-        })
+        cpu_pricing = fetch_pricing(
+            'AmazonEC2',
+            {
+                'regionCode': self.region,
+                'usageType': search_type,
+                'operatingSystem': self.platform,
+                'preInstalledSw': 'NA',
+            },
+        )
         for term in cpu_pricing['terms']['OnDemand'].values():
             for dimension in term['priceDimensions'].values():
                 yield Cost(dimension['pricePerUnit']['USD'], dimension['unit'])
@@ -203,10 +205,13 @@ class Volume:
         search_types = [region_usagetype[region] + t for t in search_types]
 
         for search_type in search_types:
-            storage_pricing = fetch_pricing('AmazonEC2', {
-                'regionCode': self.region,
-                'usageType': search_type,
-            })
+            storage_pricing = fetch_pricing(
+                'AmazonEC2',
+                {
+                    'regionCode': self.region,
+                    'usageType': search_type,
+                },
+            )
 
             for term in storage_pricing['terms']['OnDemand'].values():
                 for dimension in term['priceDimensions'].values():
@@ -217,7 +222,9 @@ class DBInstance(Instance):
     CLOUDWATCH_NAMESPACE = 'AWS/RDS'
     ID_DIMENSION = 'DBInstanceIdentifier'
 
-    def __init__(self, id, name, type, engine, state, az, multi_az, storage_type, size, iops):
+    def __init__(
+        self, id, name, type, engine, state, az, multi_az, storage_type, size, iops
+    ):
         super().__init__(id, name, type, state, az)
         self.engine = engine
         self.multi_az = multi_az
@@ -243,12 +250,15 @@ class DBInstance(Instance):
         else:
             deployment_option = 'Single-AZ'
 
-        pricing = fetch_pricing('AmazonRDS', {
-            'regionCode': self.region,
-            'instanceType': self.type,
-            'databaseEngine': self.database_engine,
-            'deploymentOption': deployment_option,
-        })
+        pricing = fetch_pricing(
+            'AmazonRDS',
+            {
+                'regionCode': self.region,
+                'instanceType': self.type,
+                'databaseEngine': self.database_engine,
+                'deploymentOption': deployment_option,
+            },
+        )
 
         for term in pricing['terms']['OnDemand'].values():
             for dimension in term['priceDimensions'].values():
@@ -268,15 +278,20 @@ class DBInstance(Instance):
             search_types = ['StorageUsage']
         else:
             raise Exception('unknown search type for ' + self.storage_type)
-        search_types = [region_usagetype[self.region] + search_type_prefix + t for t in search_types]
+        search_types = [
+            region_usagetype[self.region] + search_type_prefix + t for t in search_types
+        ]
 
         costs = defaultdict(float)
         for search_type in search_types:
-            pricing = fetch_pricing('AmazonRDS', {
-                'regionCode': self.region,
-                'usagetype': search_type,
-                'databaseEngine': self.database_engine,
-            })
+            pricing = fetch_pricing(
+                'AmazonRDS',
+                {
+                    'regionCode': self.region,
+                    'usagetype': search_type,
+                    'databaseEngine': self.database_engine,
+                },
+            )
 
             for term in pricing['terms']['OnDemand'].values():
                 for dimension in term['priceDimensions'].values():
@@ -309,12 +324,16 @@ class DBInstance(Instance):
         storage_type = json['StorageType']
         size = json['AllocatedStorage']
         iops = json.get('Iops')
-        return DBInstance(id, name, type, engine, state, az, multi_az, storage_type, size, iops)
+        return DBInstance(
+            id, name, type, engine, state, az, multi_az, storage_type, size, iops
+        )
 
 
 class CacheInstance(Instance):
     CLOUDWATCH_NAMESPACE = 'AWS/ElastiCache'
-    ID_DIMENSION = 'CacheClusterId'  # this isn't quite right. we're ignoring CacheNodeId
+    ID_DIMENSION = (
+        'CacheClusterId'  # this isn't quite right. we're ignoring CacheNodeId
+    )
 
     def __init__(self, id, name, type, state, region, engine):
         super().__init__(id, name, type, state, region)
@@ -328,11 +347,14 @@ class CacheInstance(Instance):
     def unit_price(self):
         search_type = region_usagetype[self.region] + 'NodeUsage:' + self.type
 
-        pricing = fetch_pricing('AmazonElastiCache', {
-            'regionCode': self.region,
-            'usagetype': search_type,
-            'cacheEngine': self.engine,
-        })
+        pricing = fetch_pricing(
+            'AmazonElastiCache',
+            {
+                'regionCode': self.region,
+                'usagetype': search_type,
+                'cacheEngine': self.engine,
+            },
+        )
 
         for term in pricing['terms']['OnDemand'].values():
             for dimension in term['priceDimensions'].values():
@@ -369,26 +391,36 @@ class FargateInstance(Instance):
             'ARM64': 'Fargate-ARM-vCPU-Hours:perCPU',
         }
         search_type = region_usagetype[self.region] + cpu_usagetype[self.arch]
-        cpu_pricing = fetch_pricing("AmazonECS", {
-            'regionCode': self.region,
-            'usageType': search_type,
-        })
+        cpu_pricing = fetch_pricing(
+            'AmazonECS',
+            {
+                'regionCode': self.region,
+                'usageType': search_type,
+            },
+        )
         for term in cpu_pricing['terms']['OnDemand'].values():
             for dimension in term['priceDimensions'].values():
-                yield Cost(dimension['pricePerUnit']['USD'], dimension['unit']) * self.cpu
+                yield (
+                    Cost(dimension['pricePerUnit']['USD'], dimension['unit']) * self.cpu
+                )
 
         memory_usagetype = {
             'x86_64': 'Fargate-GB-Hours',
             'ARM64': 'Fargate-ARM-GB-Hours',
         }
         search_type = region_usagetype[self.region] + memory_usagetype[self.arch]
-        memory_pricing = fetch_pricing("AmazonECS", {
-            'regionCode': self.region,
-            'usageType': search_type,
-        })
+        memory_pricing = fetch_pricing(
+            'AmazonECS',
+            {
+                'regionCode': self.region,
+                'usageType': search_type,
+            },
+        )
         for term in memory_pricing['terms']['OnDemand'].values():
             for dimension in term['priceDimensions'].values():
-                yield Cost(dimension['pricePerUnit']['USD'], dimension['unit']) * (self.memory / 1024)
+                yield Cost(dimension['pricePerUnit']['USD'], dimension['unit']) * (
+                    self.memory / 1024
+                )
 
     @staticmethod
     def from_json(json, region):
@@ -396,7 +428,11 @@ class FargateInstance(Instance):
         name = json['taskDefinitionArn'].split('/', 1)[1]
         cpu = int(json['cpu']) / 1024
         memory = int(json['memory'])
-        arch = [a['value'] for a in json['attributes'] if a['name'] == 'ecs.cpu-architecture'][0]
+        arch = [
+            a['value']
+            for a in json['attributes']
+            if a['name'] == 'ecs.cpu-architecture'
+        ][0]
         return FargateInstance(id, name, cpu, memory, arch, region)
 
 
@@ -468,7 +504,11 @@ def fetch_db_info(client, **kwargs):
     db_metadata = client.describe_db_instances(**kwargs)
 
     # TODO: DocumentDB instances get returned here, but use a totally different pricing model
-    return [DBInstance.from_json(d) for d in db_metadata['DBInstances'] if d['Engine'] != 'docdb']
+    return [
+        DBInstance.from_json(d)
+        for d in db_metadata['DBInstances']
+        if d['Engine'] != 'docdb'
+    ]
 
 
 def fetch_cache_info(client, **kwargs):
@@ -511,19 +551,47 @@ def just_one(costs, per):
 
 
 def build_instance_cost_table(instances, include_cpu=False, per='day'):
-    headers = ('name', 'id', 'az', 'type', 'type $/' + per, 'disk GB', 'disk $/' + per, 'running $/' + per, 'state', 'actual $/' + per)
+    headers = (
+        'name',
+        'id',
+        'az',
+        'type',
+        'type $/' + per,
+        'disk GB',
+        'disk $/' + per,
+        'running $/' + per,
+        'state',
+        'actual $/' + per,
+    )
     if include_cpu:
-        headers += ('avg %cpu', 'max %cpu')  # hourly, but that's too much text to put in the column heading
+        headers += (
+            'avg %cpu',
+            'max %cpu',
+        )  # hourly, but that's too much text to put in the column heading
 
     def dollars(stat):
         return stat._convert(per).dollars
 
     def build_row(i):
         instance_cost, storage_cost, total_cost, actual_cost = i.simple_costs()
-        row = (i.name, i.id, i.az, i.type, dollars(instance_cost), i.total_storage, dollars(storage_cost), dollars(total_cost), i.state, dollars(actual_cost))
+        row = (
+            i.name,
+            i.id,
+            i.az,
+            i.type,
+            dollars(instance_cost),
+            i.total_storage,
+            dollars(storage_cost),
+            dollars(total_cost),
+            i.state,
+            dollars(actual_cost),
+        )
         if include_cpu:
             if i.cpu_usage and len(i.cpu_usage):
-                row += (round(sum(i.cpu_usage) / len(i.cpu_usage), 1), round(max(i.cpu_usage), 1))
+                row += (
+                    round(sum(i.cpu_usage) / len(i.cpu_usage), 1),
+                    round(max(i.cpu_usage), 1),
+                )
             else:
                 row += (None, None)
         return row
@@ -537,12 +605,24 @@ def print_instance_cost_table(instances, total=True, tablefmt='simple', per='day
     if include_cpu:
         cost_index = -3
 
-    headers, table = build_instance_cost_table(instances, include_cpu=include_cpu, per=per)
+    headers, table = build_instance_cost_table(
+        instances, include_cpu=include_cpu, per=per
+    )
     # cost decreasing, name increasing
     table.sort(key=lambda x: (-x[cost_index], x[0]))
     if total:
-        total_row = ('Total', '', '', '', sum(r[4] for r in table), sum(r[5] for r in table), sum(r[6] for r in table),
-                     sum(r[7] for r in table), '', sum(r[9] for r in table))
+        total_row = (
+            'Total',
+            '',
+            '',
+            '',
+            sum(r[4] for r in table),
+            sum(r[5] for r in table),
+            sum(r[6] for r in table),
+            sum(r[7] for r in table),
+            '',
+            sum(r[9] for r in table),
+        )
         if include_cpu:
             total_row += (None, None)
         table.append(total_row)
@@ -582,7 +662,13 @@ def fetch_cpu_usage(instances, region_name=None):
     start_time = end_time + timedelta(weeks=-1)
 
     for i in instances:
-        i.cpu_usage = cloudwatch_cpu_usage(client, i.cloudwatch_namespace, i.cloudwatch_dimensions, start_time, end_time)
+        i.cpu_usage = cloudwatch_cpu_usage(
+            client,
+            i.cloudwatch_namespace,
+            i.cloudwatch_dimensions,
+            start_time,
+            end_time,
+        )
 
 
 def cloudwatch_cpu_usage(client, namespace, dimensions, start_time, end_time):
@@ -606,9 +692,13 @@ def main():
     p.add_argument('--fargate', action='store_true')
     p.add_argument('--all-services', action='store_true')
     p.add_argument('--region', nargs='+', dest='regions', metavar='REGION')
-    p.add_argument('--all-regions', action='store_const', const=ALL_REGIONS, dest='regions')
+    p.add_argument(
+        '--all-regions', action='store_const', const=ALL_REGIONS, dest='regions'
+    )
     p.add_argument('--tablefmt', choices=tabulate_formats)
-    p.add_argument('--cpu-usage', action='store_true')  # note that this costs money; $0.01 per thousand requests
+    p.add_argument(
+        '--cpu-usage', action='store_true'
+    )  # note that this costs money; $0.01 per thousand requests
     p.add_argument('--cost-per', choices=['hr', 'day', 'mo', 'yr'], default='day')
 
     args = p.parse_args()
@@ -618,7 +708,7 @@ def main():
         args.ec2 = True
 
     all_instances = []
-    for region in (args.regions or [None]):
+    for region in args.regions or [None]:
         instances = []
         if args.ec2 or args.all_services:
             instances += fetch_all_instances(region_name=region)

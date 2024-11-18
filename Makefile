@@ -1,31 +1,22 @@
 all: .libs
 
-PATH := $(PWD)/venv/bin:$(PATH)
-SHELL := env PATH=$(PATH) /bin/bash
-
-venv:
-	python3 -m venv venv
-	pip install --upgrade pip setuptools wheel
-	pip install -r requirements.txt -r requirements-dev.txt
-
-requirements.txt: setup.py
-	pip-compile
-
-requirements-dev.txt: requirements-dev.in requirements.txt
-	pip-compile requirements-dev.in
-
-.libs: setup.py requirements.txt requirements-dev.txt venv
-	pip-sync requirements.txt requirements-dev.txt
-	pip install -e .
+.libs: pyproject.toml poetry.lock
+	poetry install
 	touch .libs
 
 .PHONY: ci
 ci: lint test
 
+.PHONY: fix
+fix: .libs
+	poetry run ruff format
+	poetry run ruff check --fix
+
 .PHONY: lint
 lint: .libs
-	ruff check
+	poetry run ruff check
+	poetry run ruff format --check
 
 .PHONY: test
 test: .libs
-	python3 -m doctest price_ec2.py
+	poetry run python3 -m doctest price_ec2.py

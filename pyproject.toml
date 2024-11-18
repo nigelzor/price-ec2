@@ -1,6 +1,32 @@
+[tool.ruff]
+target-version = "py312"
+
 [tool.ruff.format]
 quote-style = "single"
 
 [tool.ruff.lint]
 select = ["E", "F", "UP", "B", "I", "RUF100"]
 ignore = ["E501"]
+
+[tool.poetry]
+name = "price-ec2"
+version = "0.1.0"
+description = ""
+authors = ["Neil Gentleman <ngentleman@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.scripts]
+price-ec2 = 'price_ec2:main'
+
+[tool.poetry.dependencies]
+python = "^3.12"
+boto3 = "^1.35.64"
+tabulate = "^0.9.0"
+xdg = "^6.0.0"
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.7.4"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
