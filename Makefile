@@ -1,7 +1,7 @@
 all: .libs
 
-.libs: pyproject.toml poetry.lock
-	poetry install
+.libs: pyproject.toml uv.lock
+	uv sync
 	touch .libs
 
 .PHONY: ci
@@ -9,14 +9,14 @@ ci: lint test
 
 .PHONY: fix
 fix: .libs
-	poetry run ruff format
-	poetry run ruff check --fix
+	uv run ruff format
+	uv run ruff check --fix
 
 .PHONY: lint
 lint: .libs
-	poetry run ruff check
-	poetry run ruff format --check
+	uv run ruff check
+	uv run ruff format --check
 
 .PHONY: test
 test: .libs
-	poetry run python3 -m doctest price_ec2.py
+	uv run python3 -m doctest price_ec2.py

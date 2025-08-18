@@ -3,6 +3,5 @@
 
 ## usage
 ```
-poetry install
-poetry run price-ec2
+uv run price_ec2.py
 ```
